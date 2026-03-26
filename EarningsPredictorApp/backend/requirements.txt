@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+yfinance
+xgboost
+scikit-learn
+textblob
+pandas
+numpy
+

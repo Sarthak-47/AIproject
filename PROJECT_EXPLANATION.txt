@@ -1,0 +1,122 @@
+================================================================================
+PROJECT EXPLANATION: EARNINGS SURPRISE PREDICTOR
+================================================================================
+
+1. PROJECT OVERVIEW AND PURPOSE
+--------------------------------------------------------------------------------
+The Earnings Surprise Predictor is a sophisticated quantitative platform built 
+to forecast quarterly earnings "beats" or "misses." In the financial world, 
+an "earnings surprise" occurs when a company's actual Earnings Per Share (EPS) 
+diverges significantly from the consensus estimate provided by Wall Street 
+analysts. 
+
+Core Goal: Identify companies likely to report a "Positive Surprise" (Actual EPS 
+> 15% above Estimate) or a "Negative Surprise" (Actual EPS < 15% below Estimate).
+Since significant surprises often lead to sharp, immediate changes in stock 
+price, this tool provides a statistical "edge" for traders before the 
+announcement occurs.
+
+
+2. DATA ACQUISITION & PIPELINE ARCHITECTURE
+--------------------------------------------------------------------------------
+The project leverages a hybrid approach to data:
+
+A. HISTORICAL RESEARCH DATA (The Foundation):
+- Source: Financial Modeling Prep (FMP) API.
+- Scope: 10 years of data (2012-2022) for 2,000+ U.S. companies.
+- Storage: AWS RDS MySQL database.
+- Metrics Extracted:
+    * Historical EPS actuals vs. estimates.
+    * Daily price action (OHLCV).
+    * Technical indicators (SMA, EMA, WMA, RSI, and Volatility).
+
+B. LIVE INFERENCE DATA (The Execution):
+- Source: yfinance (Yahoo Finance API).
+- Dynamic Fetching: When a user searches for a ticker, the system performs 
+  a just-in-time (JIT) extraction of:
+    * The last 4-8 quarters of earnings results.
+    * The last 3 months of daily price history.
+    * Real-time metadata (Revenue Growth, TTM EPS, Debt/Equity).
+    * Recent news headlines for NLP processing.
+
+
+3. THE "KEY SIGNALS" ENGINE (FEATURE ENGINEERING)
+--------------------------------------------------------------------------------
+The system transforms raw data into five "Key Signals" displayed in the UI:
+
+1. REVENUE GROWTH: 
+   Pulled directly from company financial statements via the Ticker Info. 
+   High growth suggests operational momentum.
+
+2. HISTORICAL BEAT RATE:
+   Calculated by analyzing the 'surprisePercent' field of the last 4 quarters. 
+   If a company consistently beats (e.g., 4/4), it suggests a "sandbagging" 
+   culture where they purposely set low estimates to ensure a beat.
+
+3. PREVIOUS SURPRISE %:
+   The magnitude of last quarter's beat. Markets often show "earnings 
+   momentum" where one strong quarter is followed by another as internal 
+   projects continue to scale.
+
+4. PRICE MOMENTUM (30-DAY):
+   Calculated as the percentage change in closing price over the last 30 
+   trading days. Strong momentum suggests the market is already "pricing in" 
+   good news or that institutional buying is increasing.
+
+5. NEWS SENTIMENT (NLP):
+   The system scrapes the top 5 news headlines for the stock and processes 
+   them using the TextBlob NLP library. It calculates a polarity score 
+   (-1.0 to 1.0) based on the tone of the language used in recent reporting.
+
+
+4. THE PREDICTION LOGIC: FROM ML TO ANALYTICAL SCORING
+--------------------------------------------------------------------------------
+While the project initially focused on Random Forest and XGBoost models, 
+production testing revealed that standard ML models often become "biased" 
+towards high-market-cap stocks (like AAPL or MSFT) because they almost 
+never miss. 
+
+To solve this, the live app uses a WEIGHTED ANALYTICAL SCORING formula:
+
+- BASELINE: Starts at 50% (Pure Neutral).
+- HISTORICAL BEAT BIAS (+/- 40% Weight): Companies with a 100% beat rate in 
+  the last year receive a massive upward push.
+- MOMENTUM BOOST (+/- 25% Weight): If the stock has gained 10%+ in the last 
+  month, the probability of a beat increases.
+- SURPRISE MOMENTUM (+/- 20% Weight): Carries forward the energy from last 
+  quarter's specific surprise percentage.
+- THE VOLATILITY DAMPER: This is a unique safety feature. If the stock's price 
+  volatility is extremely high (above 3% daily), the system "dampens" the 
+  signal, pulling it back toward 50%. High volatility implies high uncertainty, 
+  making any prediction less reliable.
+
+FINAL OUTPUT: A probability between 25% and 75%, categorized as a 'BEAT' 
+(>= 50%) or 'MISS' (< 50%).
+
+
+5. TECHNICAL STACK
+--------------------------------------------------------------------------------
+BACKEND:
+- Language: Python 3.10+
+- Web Framework: FastAPI (for high-speed, asynchronous performance).
+- Libraries: yfinance (data), TextBlob (NLP), Pandas/NumPy (math), Uvicorn.
+
+FRONTEND:
+- Framework: React.js with Vite.
+- Visuals: Recharts (Charts), Lucide-React (Icons), Tailwind-like UI components.
+- Key Pages: 
+    * Dashboard: Ticker search and countdowns.
+    * Stock Detail: Gauge meters, detailed signal cards, and price charts.
+    * Performance: Explanation of walk-forward validation (65% accuracy target).
+
+6. HOW TO RUN THE PROJECT
+--------------------------------------------------------------------------------
+1. Navigate to the /backend folder and run: 
+   `python -m uvicorn main:app --reload`
+2. Navigate to the /frontend folder and run:
+   `npm install` and then `npm run dev`
+3. Open your browser to http://localhost:5173
+
+================================================================================
+END OF DOCUMENT
+================================================================================
