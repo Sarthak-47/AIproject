@@ -1,78 +1,264 @@
-# Earnings Surprise Prediction
+# Earnings Surprise Predictor
 
-## Idea
+A full-stack financial intelligence application that forecasts whether a publicly traded company will **beat or miss** its quarterly earnings expectations — before the announcement. Built with React, FastAPI, and a weighted analytical scoring system informed by XGBoost/Random Forest research.
 
-In this project, we collected data from various external data providers with the goal of forecasting an earnings surprise prior to a company's earnings announcement. In our case, an earnings surprise is an actual EPS greater than a 15% change from the estimated EPS. Significant earnings surprises (positive and negative) usually correlate with respective price movements following the announcement. Our goal is to forecast the acutal EPS of a company and develop a trading strategy to long/short before an earnings announcement. 
+---
 
-One of the metric we will use to forecast EPS is earnings surprise which is defined as the percentage change between the actual EPS and the estimated EPS: 
+## What Is This Project?
+
+Every quarter, publicly traded companies report their **Earnings Per Share (EPS)**. Analysts publish their **EPS estimates** in advance, and the market reacts dramatically to the gap between expectation and reality:
+
+- **Positive Surprise** → Actual EPS significantly exceeds estimate → Stock rallies
+- **Negative Surprise** → Actual EPS significantly misses estimate → Stock drops
+
+This project predicts which outcome is more likely *before* the announcement, outputting a **Beat Probability (%)** and a directional signal (`BEAT` or `MISS`). A surprise is considered "significant" at a **±15% deviation** from analyst estimates.
+
+---
+
+## System Architecture
+
+```
+┌──────────────────────────────────────────────────────┐
+│                  USER (Browser)                      │
+└─────────────────────┬────────────────────────────────┘
+                      │ Ticker Input
+                      ▼
+┌──────────────────────────────────────────────────────┐
+│             FRONTEND — React + Vite                  │
+│  Pages: Home, StockDetail, Compare, Search,          │
+│         Performance                                  │
+│  Components: GaugeMeter, PredictionCard,             │
+│              KeySignals, FeatureBar, SignalBadge      │
+│  Deployed on: Vercel                                 │
+└─────────────────────┬────────────────────────────────┘
+                      │ REST API Calls
+                      ▼
+┌──────────────────────────────────────────────────────┐
+│             BACKEND — FastAPI (Python)               │
+│  Endpoints:                                          │
+│    GET /predict/{ticker}   → Main prediction         │
+│    GET /history/{ticker}   → EPS history             │
+│    GET /signals/{ticker}   → Signal breakdown        │
+│    GET /chart/{ticker}     → 3-month price chart     │
+│    GET /countdown/{ticker} → Next earnings date      │
+│    GET /market             → S&P 500 market status   │
+│  Deployed on: Render                                 │
+└──────┬──────────────────────────────┬────────────────┘
+       │                              │
+       ▼                              ▼
+┌─────────────────┐        ┌──────────────────────────┐
+│  yfinance API   │        │   Feature Engine          │
+│  (Yahoo Finance)│        │   per_quarter_features.py │
+│  - Price data   │        │   sentiment.py            │
+│  - EPS history  │        │   features.py             │
+│  - News feed    │        └──────────────────────────┘
+│  - Calendar     │
+└─────────────────┘
+```
+
+---
+
+## End-to-End Workflow
+
+### Step 1 — User Enters a Ticker
+The user lands on the Home page and searches for a stock (e.g., `AAPL`). The frontend provides autocomplete from a built-in list of 30 major S&P 500 tickers and also tracks recently viewed tickers via `localStorage`.
+
+### Step 2 — Frontend Fires API Requests
+Once a ticker is selected, `StockDetail.jsx` concurrently fires multiple requests to the FastAPI backend:
+- `/predict/{ticker}` — to get the beat probability and signal
+- `/history/{ticker}` — to get the last 4 quarters of EPS history
+- `/chart/{ticker}` — to get 3-month price history for charting
+- `/countdown/{ticker}` — to display days until next earnings
+- `/signals/{ticker}` — to get granular signal breakdown
+
+### Step 3 — Backend Fetches Live Data
+The FastAPI backend receives the ticker and triggers `yfinance` to fetch:
+- **Earnings history** — past EPS estimates, actuals, and surprise percentages
+- **Price history** — last 3 months of OHLCV data
+- **Company info** — revenue growth, sector metadata
+- **News feed** — latest 5 headlines for sentiment analysis
+- **Calendar** — next scheduled earnings date
+
+### Step 4 — Feature Engineering
+`per_quarter_features.py` → `build_live_features(ticker)` computes a snapshot of 8 key signals using only data available *today* (no look-ahead bias):
+
+| Feature | Description |
+|---|---|
+| `beat_rate_hist` | Fraction of last 4 quarters where actual EPS > estimated EPS |
+| `prev_surprise_pct` | Surprise percentage from the most recent completed quarter |
+| `price_momentum_30d` | 30-day price return leading up to today |
+| `volatility` | Standard deviation of daily returns over the last 60 trading days |
+| `eps_estimate` | Analyst consensus EPS for the upcoming quarter |
+| `trailing_eps_4q` | Rolling sum of actual EPS over the last 4 quarters |
+| `revenue_growth` | Year-over-year revenue growth rate from Yahoo Finance info |
+| `sentiment` | NLP polarity score derived from recent news headlines |
+
+### Step 5 — Scoring Engine Calculates Beat Probability
+The production backend uses a **Weighted Analytical Scoring System** (not the raw ML model output) derived from insights gained during the research/training phase:
+
+```
+score = 0.50  (neutral starting point)
+
+score += (beat_rate_hist - 0.5) × 0.40      # Historical Beat Rate  — 40% weight
+score += prev_surprise_pct × 0.20            # Surprise Momentum     — 20% weight
+score += price_momentum_30d × 0.25           # Price Momentum        — 25% weight
+
+# Volatility dampener — pulls toward 50% under high uncertainty
+uncertainty = min(1.0, volatility / 0.03)
+score = score × (1 - uncertainty × 0.15) + 0.50 × (uncertainty × 0.15)
+
+beat_probability = clip(score, 0.25, 0.75)   # honest range — avoids overconfidence
+signal = "BEAT" if beat_probability ≥ 0.50 else "MISS"
+```
+
+> **Why not use the ML model directly?** The trained XGBoost/Random Forest classifier became biased toward large-cap S&P 500 stocks (which beat almost every quarter by a thin margin), assigning them all a flat ~75% probability. The weighted scoring system provides genuine per-ticker variance by explicitly weighting all four signals.
+
+### Step 6 — Sentiment Analysis (NLP)
+`sentiment.py` uses **TextBlob** to analyze the polarity of the 5 most recent news headlines fetched via `yfinance`. It returns a score from -1.0 (very negative) to +1.0 (very positive), mapped to `Positive / Neutral / Negative` labels in the UI.
+
 ```python
-earnings_surprise = (actual_eps - estimated_eps) / |estimated_eps| * 100
+titles = ' '.join([n.get('title', '') for n in stock.news[:5]])
+score = TextBlob(titles).sentiment.polarity
 ```
 
-An earnings surprise greater than 15% is considered to be 'Positive', while an earnings surprise less than -15% is considered to be 'Negative'. Therefore, any earnings surprise greater than -15% and less than 15% is considered to be 'Neutral'.
+### Step 7 — Frontend Renders the Dashboard
+The React frontend displays results across multiple components:
 
-## Data
+- **`GaugeMeter`** — Animated arc gauge showing beat probability (25–75%)
+- **`PredictionCard`** — Main card with signal badge (`BEAT`/`MISS`), probability, next earnings date, and countdown
+- **`KeySignals`** — Four signal cards: Revenue Growth, Historical Beat Rate, Last Surprise %, Sentiment
+- **`FeatureBar`** — Horizontal bar visualization of feature importance
+- **`SignalBadge`** — Color-coded BEAT/MISS/NEUTRAL badge
+- **Price Chart** — 3-month price history line chart (Recharts)
+- **EPS History Chart** — Bar chart comparing actual vs. estimated EPS for last 4 quarters
 
-The data used for this project was collected from three external data provider's API and stored in a MySQL database using AWS' Relational Database Service (RDS). The data is indexed further to provide training, validation, and testing data for our machine learning model. There are three types of data collected for this project: historical earnings data, pricing data, and technical price action data. 
+---
 
-#### Historical Earnings Data
-Historical earnings data was collect from Financial Modeling Prep's Historical Earnings Calendar endpoint. This data provides insight into a company's previous earnings announcement, including earnings date, time, and analyst estimate data. Earnings data was collected for 2000+ companies that are traded on a U.S. exchange and greater than $1 billion market capitalization. All earnings data is collected from 2012 to 2022, which provides us with over 10 years to historical data. 
+## The ML Research Phase (Training)
 
-#### Pricing Data
-For each historical earnings data point from FMP's API, we collect basic daily pricing data for the previous trading day prior to the earnings announcement. Pricing data includes the open, high, low, close, and volume. This collection of data gives us insight into the most recent information about a stock prior to their earnings announcement.
+The production scoring system was informed by an ML research phase using `train.py`:
 
-#### Technical Data
-Technical or price action data was collected from various data providers and gives us insight into trends that are happening with price 5, 10, and 20 days out from a company's earnings announcement.
+- **Data**: Historical earnings data for 30 major U.S. tickers, pulled quarter-by-quarter via `yfinance`
+- **Model**: `XGBClassifier` wrapped with `CalibratedClassifierCV` for well-calibrated probability outputs
+- **Training split**: Chronological (older quarters train, recent quarters test) to prevent future leakage
+- **Features used**: All 8 features listed in Step 4, built per-quarter with no look-ahead bias
+- **Key finding**: `beat_rate_hist` and `prev_surprise_pct` were the strongest predictors; price momentum and volatility added meaningful signal
 
-## Feature Engineering / Data Wrangling
+The trained model artifacts (`model.pkl`, `feature_cols.pkl`) are preserved in the backend directory but the production `/predict` endpoint uses the weighted scoring formula above for more interpretable and stable per-ticker results.
 
-Most data was filtered and cleansed of imperfections during the ETL process (see rds-mysql-pipeline repository for more information). However, we did find more nuances that required further cleansing. After removing outliers, our earnings surprise results follow a normal distribution with majority of the values ranging -300% to 300%.
+---
 
-![Untitled Workspace (1)](https://github.com/brodyu/predicting-earnings-surprises/blob/main/visuals/histogram_eps_diff.png)
+## Project Structure
 
-Moreover, we investigated the potential differences between positive, neutral, and negative earnings surprises with earnings time and differences in the day of week in which an earnings report is announced. In order to do this, we created several new features including the day of week and day of year an earnings annoucement fell on. From the bar graph below, we can see the distribution between positive, neutral, and negative earnings surprises.
-
-![Untitled Workspace (1)](https://github.com/brodyu/predicting-earnings-surprises/blob/main/visuals/earn_bar.png)
-
-While majority of earnings annoucements resulted in neutral earnings, there are signifiantly more positive earnings surprises than negative earnings surprises. Therefore when developing our trading strategy, it might be more lucrative to only go long positively predicted earnings surprises. 
-
-When breaking down historical earnings surprises by earnings time, we can see that there is no significant difference between earnings surprise and when the earnings is announced. An earnings annoucement can occur before market open (bmo) or after market close (amc).
-
-![Untitled Workspace (1)](https://github.com/brodyu/predicting-earnings-surprises/blob/main/visuals/earn_bar_time.png)
-
-In order to investigate the potential differences between earnings surprise and day of week, we created new features that extract the day of week of each earnings annoucement. 
-
-![Untitled Workspace (1)](https://github.com/brodyu/predicting-earnings-surprises/blob/main/visuals/earn_bar_dow.png)
-
-In contrast to common belief, a company is not more likely to host a negative earnings surprise on a Friday. The original idea was that a company would purposefully report a negative surprise on a Friday to escape the attention of the market ahead of the weekend. However in reality, the distribution of earnings surprises over the past ten years are very similar amongst all earnings surprise brackets. There is no notable increase in negative earnings surprises on Fridays. In fact, most companies prefer to report on Thursdays rather than Fridays. 
-
-### Lagging Earnings Features
-While our pricing data contains lagging features with our technical price action dataset, we do not have lagged features for earnings related variables. Therefore, in our sql statement we will derive lagging indicators to feed our model with the LAG() function. In particular, we will create lagging features from the percentageChange, eps, and epsEstimated variables. The limitation of this approach is that it will decrease data size. Lagging each earnings feature is single time reduces the data size by 3.5% and two time reduces it by a total of 6.68%. For our approach we felt two lagging features were enough to capture historical trends. However, we would have prefered to increase our dataset size to account for data loss during feature lags. 
-
-The SQL statement used to derive the lagging earnings features will be displayed below: 
-```sql
-SELECT *, 
-LAG(perc_change) OVER(PARTITION BY symbol ORDER BY STR_TO_DATE(`date`, '%c/%e/%y')) AS lastSurp, 
-LAG(perc_change, 2) OVER(PARTITION BY symbol ORDER BY STR_TO_DATE(`date`, '%c/%e/%y')) AS last2Surp,
-
-LAG(eps) OVER(PARTITION BY symbol ORDER BY STR_TO_DATE(`date`, '%c/%e/%y')) AS lastEps,
-LAG(eps, 2) OVER(PARTITION BY symbol ORDER BY STR_TO_DATE(`date`, '%c/%e/%y')) AS last2Eps,
-
-LAG(epsEstimated) OVER(PARTITION BY symbol ORDER BY STR_TO_DATE(`date`, '%c/%e/%y')) AS lastEst,
-LAG(epsEstimated, 2) OVER(PARTITION BY symbol ORDER BY STR_TO_DATE(`date`, '%c/%e/%y')) AS last2Est
-FROM (
-    SELECT *, COALESCE((eps - epsEstimated) / ABS(epsEstimated) * 100,0) AS perc_change
-    FROM train_agg
-    ORDER BY STR_TO_DATE(`date`, '%c/%e/%y')
-)x
 ```
-## Modeling
-Due to this projects enphasis on machine learning infrastructure instead of modeling, we fitted a simple Random Forest Model from scikit-learn's ensemble library. The Random Forest algorithm is a supervised machine learning technique that uses multiple decision trees in parallel to predict our value. 
+AIproject-main/
+├── EarningsPredictorApp/
+│   ├── backend/
+│   │   ├── main.py                  # FastAPI app, all endpoints
+│   │   ├── per_quarter_features.py  # Feature engineering (historical + live)
+│   │   ├── features.py              # Supplementary feature helpers
+│   │   ├── sentiment.py             # NLP sentiment via TextBlob
+│   │   ├── train.py                 # ML model training script (research)
+│   │   ├── model.pkl                # Trained XGBoost model (serialized)
+│   │   ├── feature_cols.pkl         # Feature column schema (serialized)
+│   │   └── requirements.txt         # Backend Python dependencies
+│   ├── frontend/
+│   │   ├── src/
+│   │   │   ├── pages/
+│   │   │   │   ├── Home.jsx         # Landing page with ticker search
+│   │   │   │   ├── StockDetail.jsx  # Main prediction dashboard
+│   │   │   │   ├── Compare.jsx      # Side-by-side stock comparison
+│   │   │   │   ├── Search.jsx       # Search results page
+│   │   │   │   └── Performance.jsx  # Historical performance view
+│   │   │   └── components/
+│   │   │       ├── GaugeMeter.jsx   # Beat probability arc gauge
+│   │   │       ├── PredictionCard.jsx
+│   │   │       ├── KeySignals.jsx
+│   │   │       ├── FeatureBar.jsx
+│   │   │       ├── SignalBadge.jsx
+│   │   │       └── LoadingState.jsx
+│   │   ├── package.json
+│   │   └── vite.config.js
+│   ├── render.yaml                  # Render deployment config (backend)
+│   └── .env.example
+├── scripts/
+│   └── backfillter.py               # Historical data backfill utility
+├── requirements.txt                 # Research-phase dependencies
+├── system_architecture.txt          # Architecture reference
+└── PROJECT_EXPLANATION.md           # Detailed project narrative
+```
 
-We can interpret the value of each feature using the feature_importances_ function from scikit-learn. As seen below, the feature with the most influence over our predicted EPS is the analysts' estimated EPS. This comes as no surprise as analysts' estimates are usually very close to the actual EPS.
+---
 
-![Untitled Workspace (1)](https://github.com/brodyu/predicting-earnings-surprises/blob/main/visuals/feature_import.png)
+## Getting Started
 
-When we exclude the epsEstimated feature, we can see that the lagged earnings features we created with SQL also play a large part in the model's decision process. Moreover, other attributes such as volume, volatility, and the percentage change one day prior to earnings also displayed an impact in feature importance. However, our pricing indicators such as the weighted moving average and simple moving average had little to no effect on feature importance.
+### Prerequisites
+- Python 3.9+
+- Node.js 18+
+- pip, npm
 
-![Untitled Workspace (1)](https://github.com/brodyu/predicting-earnings-surprises/blob/main/visuals/feature_import_exlud.png)
+### Backend Setup
+
+```bash
+cd EarningsPredictorApp/backend
+pip install fastapi uvicorn yfinance pandas numpy scikit-learn xgboost textblob joblib
+python -m uvicorn main:app --reload --port 8000
+```
+
+The API will be available at `http://localhost:8000`. You can explore all endpoints at `http://localhost:8000/docs` (Swagger UI).
+
+### Frontend Setup
+
+```bash
+cd EarningsPredictorApp/frontend
+npm install
+```
+
+Create a `.env` file (copy from `.env.example`) and set:
+```
+VITE_API_URL=http://localhost:8000
+```
+
+Then run:
+```bash
+npm run dev
+```
+
+The app will be available at `http://localhost:5173`.
+
+### (Optional) Re-train the Model
+
+```bash
+cd EarningsPredictorApp/backend
+python train.py
+```
+
+This will fetch data for 30 tickers via `yfinance`, build per-quarter features, train an XGBoost classifier, and save `model.pkl` and `feature_cols.pkl`.
+
+---
+
+## Tech Stack
+
+| Category | Technologies |
+|---|---|
+| **Frontend** | React 18, Vite, Tailwind CSS, Recharts, Lucide React, Axios |
+| **Backend** | Python, FastAPI, Uvicorn |
+| **Data** | yfinance (Yahoo Finance), Pandas, NumPy |
+| **ML / NLP** | XGBoost, Scikit-learn, TextBlob |
+| **Deployment** | Vercel (frontend), Render (backend) |
+| **Serialization** | Pickle (model artifacts) |
+
+---
+
+## Limitations & Disclaimer
+
+- Predictions are based on **historical patterns and quantitative signals only** — they do not incorporate insider information, macro events, or management guidance.
+- The model is calibrated on **large-cap S&P 500 stocks**; accuracy degrades for small/mid-cap or thinly traded equities.
+- Beat probability is clipped to **[0.25, 0.75]** intentionally — the model does not claim near-certainty.
+- **This is not financial advice.** Use this tool for research and educational purposes only.
+
+---
+
+## Author
+
+Built by **Sarthak** as a financial ML research project, combining quantitative finance concepts with production-grade full-stack engineering.
