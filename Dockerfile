@@ -1,16 +1,14 @@
-# --- Stage 1: Build Frontend ---
-FROM node:18-slim AS frontend-build
+# Stage 1: Build the React frontend
+FROM node:18-alpine AS frontend-builder
 WORKDIR /app/frontend
 COPY EarningsPredictorApp/frontend/package*.json ./
 RUN npm install
 COPY EarningsPredictorApp/frontend/ ./
 RUN npm run build
 
-# --- Stage 2: Final Image ---
+# Stage 2: Setup the Python backend
 FROM python:3.10-slim
-
-# Set working directory to backend folder as home
-WORKDIR /app/backend
+WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -18,23 +16,19 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy backend requirements and install
-COPY EarningsPredictorApp/backend/requirements.txt ./
+COPY EarningsPredictorApp/backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend source
-COPY EarningsPredictorApp/backend/ ./
+# Copy backend code
+COPY EarningsPredictorApp/backend/ /app/backend/
 
-# Copy built frontend assets from stage 1 into backend/dist
-COPY --from=frontend-build /app/frontend/dist ./dist
+# Copy built frontend from Stage 1 to the backend's dist directory
+# main.py expects "dist" in its current working directory
+COPY --from=frontend-builder /app/frontend/dist /app/backend/dist
 
-# Create a non-root user (Hugging Face recommendation)
-RUN useradd -m -u 1000 user
-USER user
-ENV HOME=/home/user \
-    PATH=/home/user/.local/bin:$PATH
-
-# Expose the standard Hugging Face port
+# Expose the port Hugging Face Spaces expects
 EXPOSE 7860
 
-# Run uvicorn on port 7860
+# Command to run the application
+WORKDIR /app/backend
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
