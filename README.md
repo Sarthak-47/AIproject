@@ -1,3 +1,12 @@
+---
+title: Earnings Predictor API
+emoji: 📊
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+---
+
 # Earnings Surprise Prediction
 
 ## Idea
