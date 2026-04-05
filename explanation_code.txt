@@ -1,0 +1,51 @@
+# Earnings Surprise Predictor - Project Code Explanation
+
+This document provides a comprehensive overview of the files and code used in the Predicting Earnings Surprises project.
+
+## Project Structure Overview
+
+The project is divided into a backend (Python/FastAPI) and a frontend (React/Vite).
+
+### Root Directory
+- `predicting-earnings-surprises.ipynb`: The original research notebook containing Exploratory Data Analysis (EDA), feature engineering experiments, and initial model training.
+- `requirements.txt`: List of Python dependencies required to run the backend and scripts.
+- `data/`: Contains datasets like `nasdaq_list.csv` used for ticker validation and metadata.
+- `models/`: Storage for trained machine learning models.
+- `system_architecture.txt`: A high-level overview of how the frontend, backend, and data sources (yfinance) interact.
+- `PROJECT_EXPLANATION.md`: Detailed documentation explaining the project goals, data acquisition, and model performance.
+
+---
+
+### Backend (EarningsPredictorApp/backend)
+The backend provides the API and the core machine learning logic.
+
+- `main.py`: The entry point for the FastAPI server. It defines all API endpoints, including:
+    - `/predict/{ticker}`: Returns an earnings beat prediction.
+    - `/signals/{ticker}`: Provides key financial signals (Revenue Growth,历史 beat rate, etc.).
+- `features.py`: Responsible for fetching financial data using the `yfinance` library and calculating the feature set (e.g., PE Ratio, Debt-to-Equity, SMA).
+- `sentiment.py`: Scrapes recent news headlines for a ticker and performs sentiment analysis using Natural Language Processing (NLP).
+- `train.py`: A script used to train the Random Forest Classifier on historical earnings data and export the model.
+- `model.pkl`: The saved (pickled) Random Forest model used for making real-time predictions.
+- `feature_cols.pkl`: A saved list of column names to ensure consistency between training and inference features.
+- `check_features.py`: A utility script for debugging feature extraction output for specific tickers.
+- `per_quarter_features.py`: Handles the extraction and processing of quarterly financial data.
+
+---
+
+### Frontend (EarningsPredictorApp/frontend)
+A modern React application built with Vite and Tailwind CSS.
+
+#### Pages (src/pages)
+- `Home.jsx`: The landing page featuring a search bar to look up specific stocks.
+- `StockDetail.jsx`: The primary dashboard for a specific ticker. It displays the "Beat" probability, Key Signals, and sentiment analysis.
+- `Compare.jsx`: Allows users to compare financial metrics and predictions for two different stocks side-by-side.
+- `Performance.jsx`: Displays historical accuracy and model performance metrics.
+- `Search.jsx`: Handles displaying and filtering search results.
+
+#### Components (src/components)
+- `KeySignals.jsx`: A critical component that visualizes financial health indicators (like Revenue Growth or News Sentiment) using progress bars.
+- `GaugeMeter.jsx`: A visual gauge that displays the "Probability of Beating Earnings" in an intuitive circular format.
+- `PredictionCard.jsx`: Displays the final prediction (Beat vs. Miss) with a confidence score.
+- `FeatureBar.jsx`: A focused visualization for individual financial features.
+- `SignalBadge.jsx`: Shows quick "Positive" or "Negative" tags for specific data points.
+- `LoadingState.jsx`: Provides skeleton screens and spinners to improve perceived performance during API calls.

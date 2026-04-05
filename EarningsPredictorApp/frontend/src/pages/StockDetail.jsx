@@ -62,25 +62,39 @@ export default function StockDetail() {
     const fetchData = async () => {
       try {
         setLoading(true)
+        setError(null)
         const apiUrl = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000"
         
-        // Fetch core data in parallel
-        const [resPred, resHist, resChart] = await Promise.all([
-          axios.get(`${apiUrl}/predict/${ticker}`),
-          axios.get(`${apiUrl}/history/${ticker}`),
-          axios.get(`${apiUrl}/chart/${ticker}`)
-        ])
+        // --- Core Prediction ---
+        // This is non-negotiable for the page to work.
+        let predictionData = null
+        try {
+          const resPred = await axios.get(`${apiUrl}/predict/${ticker}`)
+          predictionData = resPred.data
+          setData(predictionData)
+        } catch (err) {
+          throw new Error(err.response?.data?.detail || "Failed to fetch prediction.")
+        }
+
+        // --- Secondary Data ---
+        // If these fail, we can still show the core page.
         
-        setData(resPred.data)
-        setHistory(resHist.data || [])
-        setChart(resChart.data || [])
+        // History
+        axios.get(`${apiUrl}/history/${ticker}`)
+          .then(res => setHistory(res.data || []))
+          .catch(e => console.warn("Failed to fetch earnings history:", e))
 
-        // Optional countdown fetch - fails silently if not available
-        axios.get(`${apiUrl}/countdown/${ticker}`).then(res => {
-          if (res.data) setCountdown(res.data)
-        }).catch(() => {})
+        // Chart
+        axios.get(`${apiUrl}/chart/${ticker}`)
+          .then(res => setChart(res.data || []))
+          .catch(e => console.warn("Failed to fetch chart data:", e))
 
-        // Fetch similar stocks
+        // Countdown
+        axios.get(`${apiUrl}/countdown/${ticker}`)
+          .then(res => { if (res.data) setCountdown(res.data) })
+          .catch(() => {})
+
+        // --- Similar Stocks ---
         const peers = SECTORS[ticker.toUpperCase()]
         if (peers && peers.length > 0) {
           setLoadingSimilar(true)
@@ -95,7 +109,7 @@ export default function StockDetail() {
         }
 
       } catch (err) {
-        setError(err.response?.data?.detail || "Failed to fetch prediction.")
+        setError(err.message || "Failed to load stock data.")
       } finally {
         setLoading(false)
       }

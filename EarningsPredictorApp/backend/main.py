@@ -210,16 +210,33 @@ def market_status():
 @app.get('/chart/{ticker}')
 def get_chart(ticker: str):
     try:
+        print(f"Fetching chart for {ticker.upper()}...")
         stock = yf.Ticker(ticker.upper())
         hist = stock.history(period="3mo")
+        
+        if hist is None or hist.empty:
+            print(f"No chart history available for {ticker.upper()}")
+            return []
+            
         records = []
         for date, row in hist.iterrows():
-            records.append({
-                "date": date.strftime('%b %d') if hasattr(date, 'strftime') else str(date),
-                "close": round(row['Close'], 2)
-            })
+            try:
+                # Handle potential non-datetime index cases
+                d_str = date.strftime('%b %d') if hasattr(date, 'strftime') else str(date)
+                close_val = round(float(row['Close']), 2)
+                records.append({
+                    "date": d_str,
+                    "close": close_val
+                })
+            except Exception as inner_e:
+                print(f"Skipping row for {ticker.upper()}: {inner_e}")
+                continue
+                
+        print(f"Successfully returned {len(records)} points for {ticker.upper()}")
         return records
     except Exception as e:
+        print(f"ERROR fetching chart for {ticker.upper()}: {str(e)}")
+        # Return empty list instead of crashing, ensures frontend doesn't break
         return []
 
 @app.get('/signals/{ticker}')
