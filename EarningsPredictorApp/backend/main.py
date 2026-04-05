@@ -293,3 +293,22 @@ def signals(ticker: str):
 @app.get('/health')
 def health():
     return {'status': 'ok'}
+
+# Serve static files from the "dist" directory
+# This must be defined AFTER the API routes to avoid shadowing them
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+if os.path.exists("dist"):
+    app.mount("/assets", StaticFiles(directory="dist/assets"), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_react_app(full_path: str):
+        # Check if the requested path exists as a static file
+        file_path = os.path.join("dist", full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+        # Fallback to index.html for SPA routing
+        return FileResponse("dist/index.html")
+else:
+    print("Warning: 'dist' directory not found. Static files will not be served.")
