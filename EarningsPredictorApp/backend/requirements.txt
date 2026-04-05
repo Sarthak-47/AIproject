@@ -6,5 +6,4 @@ scikit-learn
 textblob
 pandas
 numpy
-aiofiles
 
