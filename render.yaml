@@ -2,7 +2,7 @@ services:
   # --- Backend Web Service (FastAPI) ---
   - type: web
     name: earnings-predictor-api
-    env: python
+    runtime: python
     rootDir: EarningsPredictorApp/backend
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
@@ -11,14 +11,15 @@ services:
         value: 3.10.0
 
   # --- Frontend Static Site (React/Vite) ---
-  - type: static_site
+  - type: web
+    runtime: static
     name: earnings-predictor-ui
     rootDir: EarningsPredictorApp/frontend
     buildCommand: npm install && npm run build
-    publishDir: dist
+    staticPublishPath: dist
     envVars:
       - key: VITE_API_URL
-        value: https://earnings-predictor-api.onrender.com # TODO: Update this match your backend URL after deployment
+        value: https://earnings-predictor-api.onrender.com
     routes:
       - type: rewrite
         source: /(.*)
